@@ -11,6 +11,7 @@ using System.Text;
 using System.IO;
 using System.Windows.Documents;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SmartPurchase
 {
@@ -29,7 +30,7 @@ namespace SmartPurchase
         }
 
         // 더보기 버튼 반복클릭
-        public void ClickAllMoreButtons(IWebDriver driver, IJavaScriptExecutor js)
+        public async Task ClickAllMoreButtons(IWebDriver driver, IJavaScriptExecutor js)
         {
             while (true)
             {
@@ -43,9 +44,7 @@ namespace SmartPurchase
                     {
                         moreButton.Click();
                         // 데이터 로딩 대기 (2초)
-                        Thread.Sleep(2000);
-                        // 상품명, 주문일자 가져오기
- 
+                        await Task.Delay(2000); // Thread.Sleep 대신 await Task.Delay 사용
                     }
                     else
                     {
@@ -67,9 +66,9 @@ namespace SmartPurchase
         }
 
         // 테이블에서 상품명, 주문일자 가져오기
-        public List<(string OrderDate, string ProductName)> ExtractOrderDetails(IWebDriver driver)
+        public async Task<List<(string OrderDate, string ProductName)>> ExtractOrderDetails(IWebDriver driver)
         {
-            var result = new List<(string, string)>();
+            var result = new List<(string OrderDate, string ProductName)>();
 
             var tables = driver.FindElements(By.CssSelector("table")); // 테이블 전체
             foreach (var table in tables)
@@ -86,6 +85,8 @@ namespace SmartPurchase
                         {
                             result.Add((orderDate, productName));
                         }
+                        // UI 차단 방지를 위한 짧은 비동기 대기
+                        await Task.Delay(10); // 10ms 대기
                     }
                 }
                 catch (Exception ex)
@@ -99,15 +100,17 @@ namespace SmartPurchase
 
 
         // 구매내역 메모장으로 추출해서 바탕화면으로 저장
-        public void SavePurchaseHistory(List<(string OrderDate, string ProductName)> records)
+        public void SavePurchaseHistory(List<(int counter, string OrderDate, string ProductName)> records)
         {
             StringBuilder sb = new StringBuilder();
+            int counter = 1; // 상품 번호 카운터
 
             if (records != null && records.Any())
             {
                 foreach (var record in records)
                 {
-                    sb.AppendLine($"구매일자: {record.OrderDate} / 상품명: {record.ProductName}");
+                    sb.AppendLine($"{counter}. 구매일자: {record.OrderDate} / 상품명: {record.ProductName}");
+                    counter++;
                 }
 
                 string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -122,9 +125,20 @@ namespace SmartPurchase
             }
         }
 
+        // 메인 화면에 진행 상황을 출력하는 메서드
+        private void DisplayMessage(string message)
+        {
+            // TextBox의 내용을 새 메시지로 갱신
+            ResultTextBox.Text = message;
 
+            // 필요 시 스크롤을 항상 최신 상태로 유지
+            ResultTextBox.ScrollToEnd();
+        }
+
+
+        // 메인 내용!!!
         // 사용자가 "버튼"을 누르면 크롬 브라우저로 바로 연결되면서 쇼핑몰로 이동
-        private void RunAutomationButton_Click(object sender, RoutedEventArgs e)
+        private async void RunAutomationButton_Click(object sender, RoutedEventArgs e)
         {
             // ChromeDriverService 생성
             var service = ChromeDriverService.CreateDefaultService();
@@ -165,30 +179,44 @@ namespace SmartPurchase
                             isLoggedIn = true;
 
                             // 구매내역 페이지로 이동
+                            DisplayMessage("👉 쇼핑몰로 이동 중");
                             driver.Navigate().GoToUrl("https://modellisti01.imweb.me/shop_mypage");
-
-                            // 페이지 완전 로드 대기 (2초)
-                            Thread.Sleep(2000);
+                            await Task.Delay(2000); // 페이지 로딩 기다리기
 
                             // '더보기 버튼' 자동 클릭하여 과거 구매내역까지 전체 출력
-                            ClickAllMoreButtons(driver, js);
+                            DisplayMessage("👉 전체 구매내역 확인 중");
+                            await ClickAllMoreButtons(driver, js);
 
                             // 전체 페이지에서 내용 추출
-                            var records = this.ExtractOrderDetails(driver);
+                            DisplayMessage("⏳ 구매 내역 추출 중.\n조금만 기다려 주세요.");
+                            // var records = await ExtractOrderDetails(driver);
+
+                            // WebDriver 초기화 및 데이터 수집
+                            var recordsWithoutCounter = await ExtractOrderDetails(driver); 
+                            // 데이터 반환: List<(string OrderDate, string ProductName)>
+
+                            // 데이터를 변환하여 `int counter` 추가
+                            var recordsWithCounter = recordsWithoutCounter
+                                .Select((record, index) => (index + 1, record.OrderDate, record.ProductName))
+                                .ToList();
+
+                            // SavePurchaseHistory 호출에 변환된 리스트 전달
+                            SavePurchaseHistory(recordsWithCounter);
 
                             // 추출한 정보를 메모장으로 출력하여 바탕화면으로 저장
-                            this.SavePurchaseHistory(records);
+                            DisplayMessage("✅ 구매 내역 저장 완료!\n바탕화면을 확인해 주세요.");
 
                             break;
                         }
 
-                        Thread.Sleep(2000); // 2초 간격으로 다시 체크
+                        await Task.Delay(2000); // 2초 간격으로 다시 체크
                         waitedSecond += 2;
                     }
                     // 로그인 실패(아이디 또는 비밀번호 불일치, 입력시간 초과 등)
                     if (!isLoggedIn)
                     {
                         MessageBox.Show("로그인 대기 시간이 지났습니다.");
+                        await Task.Delay(180000);
                     }
 
                     Thread.Sleep(2000); // 알림 보기용 대기시간
